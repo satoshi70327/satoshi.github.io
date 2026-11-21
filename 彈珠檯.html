@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>霓虹彈珠台 Neon Pinball</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background-color: #0b0c10;
+      color: #ffffff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      width: 360px;
+      padding: 10px 15px;
+      background: #1f2833;
+      border-radius: 10px 10px 0 0;
+      border: 2px solid #45a29e;
+      border-bottom: none;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    .score-box span { color: #66fcf1; }
+    .balls-box span { color: #ff4c68; }
+    
+    #game-container {
+      position: relative;
+      width: 360px;
+      height: 600px;
+      box-shadow: 0 0 25px rgba(102, 252, 241, 0.3);
+    }
+    canvas {
+      background: radial-gradient(circle at center, #161b22 0%, #0d1117 100%);
+      border: 2px solid #45a29e;
+      display: block;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(11, 12, 16, 0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 20px;
+    }
+    #overlay h1 {
+      color: #66fcf1;
+      text-shadow: 0 0 10px #66fcf1;
+      margin-bottom: 15px;
+      font-size: 32px;
+    }
+    #overlay p {
+      color: #c5c6c7;
+      margin-bottom: 25px;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    button.start-btn {
+      padding: 12px 30px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #0b0c10;
+      background: #66fcf1;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      box-shadow: 0 0 15px #66fcf1;
+      transition: transform 0.1s;
+    }
+    button.start-btn:active {
+      transform: scale(0.95);
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      width: 360px;
+      margin-top: 10px;
+      gap: 8px;
+    }
+    .ctrl-btn {
+      flex: 1;
+      padding: 15px 0;
+      background: #1f2833;
+      color: #66fcf1;
+      border: 2px solid #45a29e;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .ctrl-btn:active {
+      background: #45a29e;
+      color: #0b0c10;
+    }
+    .ctrl-launch {
+      background: #2b192e;
+      border-color: #ff4c68;
+      color: #ff4c68;
+    }
+    .ctrl-launch:active {
+      background: #ff4c68;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="score-box">分數: <span id="score">0</span></div>
+    <div class="balls-box">剩餘球數: <span id="balls">3</span></div>
+  </div>
+
+  <div id="game-container">
+    <canvas id="pinballCanvas" width="360" height="600"></canvas>
+    <div id="overlay">
+      <h1 id="overlay-title">霓虹彈珠台</h1>
+      <p id="overlay-desc">
+        <strong>電腦操作：</strong><br>
+        [← / A] 左擋板 ｜ [→ / D] 右擋板<br>
+        [空白鍵] 長按蓄力發射<br><br>
+        <strong>手機操作：</strong>使用下方按鈕
+      </p>
+      <button class="start-btn" id="start-btn">開始遊戲</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="ctrl-btn" id="btn-left">左擋板 (←)</button>
+    <button class="ctrl-btn ctrl-launch" id="btn-launch">蓄力發射</button>
+    <button class="ctrl-btn" id="btn-right">右擋板 (→)</button>
+  </div>
+
+<script>
+const canvas = document.getElementById('pinballCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const ballsEl = document.getElementById('balls');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlay-title');
+const overlayDesc = document.getElementById('overlay-desc');
+const startBtn = document.getElementById('start-btn');
+
+// 遊戲狀態
+let score = 0;
+let balls = 3;
+let isGameRunning = false;
+let animationId;
+
+// 物理參數
+const GRAVITY = 0.25;
+const FRICTION = 0.995;
+const LANE_X = 322; // 發射通道分隔線 X 座標
+
+// 彈珠物件
+const ball = {
+  x: 340,
+  y: 520,
+  vx: 0,
+  vy: 0,
+  radius: 9,
+  color: '#ffffff',
+  inLane: true
+};
+
+// 發射器
+const plunger = {
+  y: 540,
+  maxPull: 585,
+  power: 0,
+  isPulling: false
+};
+
+// 擋板設定
+const flippers = {
+  left: {
+    x: 105, y: 530, length: 62, radius: 7,
+    restAngle: 0.45, activeAngle: -0.55,
+    angle: 0.45, angularVelocity: 0, isPressed: false
+  },
+  right: {
+    x: 225, y: 530, length: 62, radius: 7,
+    restAngle: Math.PI - 0.45, activeAngle: Math.PI + 0.55,
+    angle: Math.PI - 0.45, angularVelocity: 0, isPressed: false
+  }
+};
+
+// 圓形保險桿 (Bumpers)
+const bumpers = [
+  { x: 165, y: 150, radius: 24, score: 100, color: '#ff4c68', hitTimer: 0 },
+  { x: 105, y: 220, radius: 20, score: 100, color: '#66fcf1', hitTimer: 0 },
+  { x: 225, y: 220, radius: 20, score: 100, color: '#66fcf1', hitTimer: 0 },
+  { x: 165, y: 280, radius: 18, score: 150, color: '#f9d423', hitTimer: 0 }
+];
+
+// 靜態牆壁線段 (x1, y1, x2, y2)
+const walls = [
+  // 發射通道左側牆壁 (上方留出口)
+  { x1: LANE_X, y1: 110, x2: LANE_X, y2: 600 },
+  // 頂部導引弧線近似
+  { x1: 360, y1: 90, x2: 310, y2: 30 },
+  { x1: 310, y1: 30, x2: 220, y2: 10 },
+  { x1: 220, y1: 10, x2: 110, y2: 10 },
+  { x1: 110, y1: 10, x2: 20, y2: 50 },
+  { x1: 20, y1: 50, x2: 5, y2: 120 },
+  // 左右側斜坡導向擋板
+  { x1: 5, y1: 120, x2: 5, y2: 430 },
+  { x1: 5, y1: 430, x2: 105, y2: 530 },
+  { x1: LANE_X, y1: 430, x2: 225, y2: 530 },
+  // 內側三角形彈力牆 (Slingshots)
+  { x1: 45, y1: 370, x2: 45, y2: 430, bounce: 1.4 },
+  { x1: 45, y1: 430, x2: 90, y2: 475, bounce: 1.4 },
+  { x1: 90, y1: 475, x2: 45, y2: 370, bounce: 1.4 },
+
+  { x1: 285, y1: 370, x2: 285, y2: 430, bounce: 1.4 },
+  { x1: 285, y1: 430, x2: 240, y2: 475, bounce: 1.4 },
+  { x1: 240, y1: 475, x2: 285, y2: 370, bounce: 1.4 }
+];
+
+// 重置單顆彈珠
+function resetBall() {
+  ball.x = 341;
+  ball.y = 520;
+  ball.vx = 0;
+  ball.vy = 0;
+  ball.inLane = true;
+  plunger.y = 540;
+  plunger.power = 0;
+}
+
+// 開始新遊戲
+function startGame() {
+  score = 0;
+  balls = 3;
+  updateUI();
+  resetBall();
+  overlay.style.display = 'none';
+  isGameRunning = true;
+  if (animationId) cancelAnimationFrame(animationId);
+  gameLoop();
+}
+
+function updateUI() {
+  scoreEl.textContent = score;
+  ballsEl.textContent = balls;
+}
+
+// 點到線段的最短距離與最近點計算
+function closestPointOnSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return { x: x1 + t * dx, y: y1 + t * dy };
+}
+
+// 更新物理狀態
+function update() {
+  // 1. 發射器蓄力邏輯
+  if (plunger.isPulling && ball.inLane && ball.y >= 500) {
+    plunger.y = Math.min(plunger.maxPull, plunger.y + 1.5);
+    plunger.power = (plunger.y - 540) * 0.45;
+    ball.y = plunger.y - 12;
+  } else if (!plunger.isPulling && plunger.power > 0) {
+    // 釋放發射
+    ball.vy = -Math.max(12, plunger.power);
+    ball.vx = -0.8; // 微微向左引導進場
+    plunger.y = 540;
+    plunger.power = 0;
+  }
+
+  // 2. 彈珠重力與移動 (若非正在被拉桿壓住)
+  if (!(plunger.isPulling && ball.inLane && ball.y >= 500)) {
+    ball.vy += GRAVITY;
+    ball.vx *= FRICTION;
+    ball.vy *= FRICTION;
+
+    // 限制最大速度防止穿牆
+    const speed = Math.hypot(ball.vx, ball.vy);
+    if (speed > 22) {
+      ball.vx = (ball.vx / speed) * 22;
+      ball.vy = (ball.vy / speed) * 22;
+    }
+
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+  }
+
+  // 判斷是否離開右方發射通道
+  if (ball.x < LANE_X - ball.radius) {
+    ball.inLane = false;
+  }
+
+  // 3. 邊界碰撞
+  if (ball.x - ball.radius < 0) {
+    ball.x = ball.radius;
+    ball.vx *= -0.7;
+  }
+  if (ball.x + ball.radius > canvas.width) {
+    ball.x = canvas.width - ball.radius;
+    ball.vx *= -0.7;
+  }
+  if (ball.y - ball.radius < 0) {
+    ball.y = ball.radius;
+    ball.vy *= -0.7;
+  }
+
+  // 發射通道底部阻擋
+  if (ball.inLane && ball.y + ball.radius > 530 && !plunger.isPulling) {
+    ball.y = 530 - ball.radius;
+    ball.vy = 0;
+  }
+
+  // 4. 更新擋板角度
+  ['left', 'right'].forEach(side => {
+    const f = flippers[side];
+    const prevAngle = f.angle;
+    const target = f.isPressed ? f.activeAngle : f.restAngle;
+    f.angle += (target - f.angle) * 0.35;
+    f.angularVelocity = f.angle - prevAngle;
+  });
+
+  // 5. 牆壁線段碰撞
+  walls.forEach(w => {
+    // 若球已進場，防止從上方掉回發射通道
+    const closest = closestPointOnSegment(ball.x, ball.y, w.x1, w.y1, w.x2, w.y2);
+    const dx = ball.x - closest.x;
+    const dy = ball.y - closest.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < ball.radius) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const overlap = ball.radius - dist;
+      ball.x += nx * overlap;
+      ball.y += ny * overlap;
+
+      const dot = ball.vx * nx + ball.vy * ny;
+      const restitution = w.bounce || 0.75;
+      ball.vx = (ball.vx - 2 * dot * nx) * restitution;
+      ball.vy = (ball.vy - 2 * dot * ny) * restitution;
+
+      if (w.bounce) {
+        score += 20;
+        updateUI();
+      }
+    }
+  });
+
+  // 6. 保險桿 (Bumpers) 碰撞
+  bumpers.forEach(b => {
+    if (b.hitTimer > 0) b.hitTimer--;
+    const dx = ball.x - b.x;
+    const dy = ball.y - b.y;
+    const dist = Math.hypot(dx, dy);
+    const minDist = ball.radius + b.radius;
+
+    if (dist < minDist) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      ball.x = b.x + nx * minDist;
+      ball.y = b.y + ny * minDist;
+
+      // 強力反彈
+      const bounceSpeed = 11;
+      ball.vx = nx * bounceSpeed;
+      ball.vy = ny * bounceSpeed;
+
+      b.hitTimer = 8;
+      score += b.score;
+      updateUI();
+    }
+  });
+
+  // 7. 擋板碰撞偵測
+  ['left', 'right'].forEach(side => {
+    const f = flippers[side];
+    const endX = f.x + Math.cos(f.angle) * f.length;
+    const endY = f.y + Math.sin(f.angle) * f.length;
+
